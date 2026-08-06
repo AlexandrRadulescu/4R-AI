@@ -26,7 +26,7 @@ def run_validation(model, feature_dir, labels_csv, video_ids, device):
     agg = {c: {"tp": 0, "fp": 0, "fn": 0} for c in CLASSES}
 
     for vid in video_ids:
-        features = np.load(Path(feature_dir) / f"{vid}.npy", nmap_mode="r")
+        features = np.load(Path(feature_dir) / f"{vid}.npy", mmap_mode="r")
         probs = predict_video(model, features, device)
         spots = pick_peaks(probs)
         truth = [(step / FPS, idx_to_class[cls]) for step, cls in all_events.get(vid, [])]

@@ -16,6 +16,7 @@ from torch.utils.data import Dataset
 
 from config import FPS, WINDOW, NUM_CLASSES, CLASS_TO_IDX, SIGMA_STEPS, NEG_RATIO
 
+
 def load_labels(csv_path: Path):
 
     events = defaultdict(list)
@@ -42,7 +43,7 @@ def build_target(num_steps: int, events, sigma: float = SIGMA_STEPS):
         if clip_lo >=  clip_hi:
             continue
 
-        b = bump[clip_lo:clip_hi, cls]
+        b = bump[clip_lo - lo: clip_hi - lo]
         target[clip_lo:clip_hi, cls] = np.maximum(target[clip_lo:clip_hi, cls], b)
 
     return target
@@ -61,7 +62,7 @@ class SpottingDataset(Dataset):
         ):
         self.window = window
         self.train = train
-        self.rng = np.randpm.default_rng(seed)
+        self.rng = np.random.default_rng(seed)
 
         all_events = load_labels(labels_csv)
         self.features, self.targets = {}, {}
@@ -72,13 +73,13 @@ class SpottingDataset(Dataset):
             if not path.exists():
                 raise FileNotFoundError(f"missing features for '{vid}' -- run extract_features.py")
 
-            feats = np.load(path, nmap_mode = "r")
+            feats = np.load(path, mmap_mode = "r")
 
             self.features[vid] = feats
             self.targets[vid] = build_target(len(feats), all_events.get(vid, []))
             
 
-            self.index = self._build_index(all_events, video_ids)
+        self.index = self._build_index(all_events, video_ids)
 
 
     def _build_index(self, all_events, video_ids):
@@ -99,7 +100,7 @@ class SpottingDataset(Dataset):
             for start in self.rng.integers(0, max_start + 1, size = n_neg):
                 index.append((vid, int(start)))
 
-            return index
+        return index
 
     def __len__(self):
         return len(self.index)

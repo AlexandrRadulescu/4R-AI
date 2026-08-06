@@ -109,4 +109,4 @@ def evaluate_spots(predicted, ground_truth, tolerance_s = 5.0):
             "tp": tp, "fp": fp, "fn": fn,
         }
 
-        return results
+    return results

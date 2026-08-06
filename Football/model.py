@@ -16,13 +16,13 @@ class ResidualBlock(nn.Module):
         self.drop = nn.Dropout(dropout)
         self.project = nn.Conv1d(channels, channels, kernel_size= 1)
 
-        def forward(self, x):
-            h = self.conv(x)
-            h = self.norm(h)
-            h = self.act(h)
-            h = self.drop(h)
-            h = self.project(h)
-            return x + h
+    def forward(self, x):
+        h = self.conv(x)
+        h = self.norm(h)
+        h = self.act(h)
+        h = self.drop(h)
+        h = self.project(h)
+        return x + h
 
 
 class Spotter(nn.Module):
@@ -47,20 +47,20 @@ class Spotter(nn.Module):
 
         nn.init.constant_(self.head.bias, -4.0)
 
-        def forward(self, x):
-            x = x.transpose(1, 2)
+    def forward(self, x):
+        x = x.transpose(1, 2)
 
-            h = self.input_proj(x)
-            for block in self.blocks:
-                h = block(h)
+        h = self.input_proj(x)
+        for block in self.blocks:
+            h = block(h)
 
-            logits = self.head(h)
+        logits = self.head(h)
 
-            return logits.transpose(1,2)
+        return logits.transpose(1,2)
 
-            @property
-            def receptive_field(self) -> int:
-                return 1 + 2 * sum(DILATIONS)
+    @property
+    def receptive_field(self) -> int:
+        return 1 + 2 * sum(DILATIONS)
 
 
 
