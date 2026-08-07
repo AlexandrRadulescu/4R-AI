@@ -9,7 +9,7 @@ CLASS_TO_IDX = {c: i for i, c in enumerate(CLASSES)}
 
 
 ## Temporal Model
-WINDOW = 128 #timesteps per training window (128/2fps = 64s)
+WINDOW = 128        #timesteps per training window (128/2fps = 64s)
 
 HIDDEN = 256
 DILATIONS = [1,2,4,8,16,32]

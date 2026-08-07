@@ -135,6 +135,35 @@
   }
   .stage.dragover { border-color: var(--goal); }
 
+  .loaderr {
+    display: none;
+    text-align: left;
+    max-width: 560px;
+    padding: 26px;
+    color: var(--chalk);
+    font-size: 13.5px;
+    line-height: 1.65;
+  }
+  .loaderr strong {
+    display: block;
+    font-family: var(--display);
+    font-size: 20px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--card);
+    margin-bottom: 10px;
+  }
+  .loaderr code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--raised);
+    padding: 2px 6px;
+    border-radius: 3px;
+    display: inline-block;
+    margin-top: 6px;
+  }
+  .loaderr .why { color: var(--muted); margin-top: 10px; }
+
   /* ---- clock ---- */
   .clockrow {
     display: flex;
@@ -170,7 +199,7 @@
   }
   .tick {
     position: absolute;
-    top: 6px; bottom: 6px;
+    top: 7px; height: 13px;
     width: 3px;
     margin-left: -1px;
     border: 0;
@@ -179,8 +208,8 @@
     cursor: pointer;
   }
   .tick.goal { background: var(--goal); }
-  .tick.shot { background: var(--shot); top: 20px; }
-  .tick.card { background: var(--card); top: 33px; }
+  .tick.shot { background: var(--shot); top: 23px; }
+  .tick.card { background: var(--card); top: 39px; }
   .tick.sel  { box-shadow: 0 0 0 2px var(--chalk); }
   .playhead {
     position: absolute; top: 0; bottom: 0;
@@ -272,6 +301,17 @@
 
   .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
 
+  .status {
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--muted);
+    min-height: 18px;
+  }
+  .status.bad { color: var(--card); }
+  .status.good { color: var(--goal); }
+
   .note {
     margin-top: 22px; padding-top: 14px;
     border-top: 1px solid var(--line);
@@ -296,7 +336,9 @@
       <input type="text" id="anchorRule" value="moment of contact / ball crosses line">
     </div>
     <button id="loadBtn">Load video</button>
-    <input type="file" id="fileInput" accept="video/*" hidden>
+    <button id="csvBtn">Load CSV</button>
+    <input type="file" id="csvInput" accept=".csv,text/csv" hidden>
+    <input type="file" id="fileInput" accept="video/*,.mkv,.avi,.ts,.m4v,.mov,.webm" hidden>
   </header>
 
   <div class="stage" id="stage">
@@ -304,6 +346,11 @@
     <div class="dropzone" id="dropzone">
       <strong>Drop a match file here</strong>
       Nothing is uploaded &mdash; the video is read locally by your browser.
+      <br>Drop a <b>.csv</b> here to reload marks you exported earlier.
+    </div>
+    <div class="loaderr" id="loaderr">
+      <strong id="errTitle">Cannot play this file</strong>
+      <span id="errBody"></span>
     </div>
   </div>
 
@@ -348,6 +395,7 @@
         <button class="primary" id="exportBtn" disabled>Export CSV</button>
         <button id="clearBtn" disabled>Clear all</button>
       </div>
+      <div class="status" id="status"></div>
     </section>
   </div>
 
@@ -378,10 +426,28 @@
   const videoId  = document.getElementById("videoId");
   const exportBtn= document.getElementById("exportBtn");
   const clearBtn = document.getElementById("clearBtn");
+  const csvInput = document.getElementById("csvInput");
+
+  const loaderr  = document.getElementById("loaderr");
 
   let events = [];      // [{t, label}]
   let selected = -1;
   let loaded = false;
+  let loadTimer = null;
+  let lastFile = null;
+
+  const MEDIA_ERRORS = {
+    1: "Loading was aborted.",
+    2: "A network error occurred while reading the file.",
+    3: "The file decoded partially then failed.",
+    4: "This browser cannot decode the file's format.",
+  };
+
+  video.addEventListener("error", () => {
+    clearTimeout(loadTimer);
+    const code = video.error ? video.error.code : 4;
+    if (lastFile) showError(lastFile, MEDIA_ERRORS[code] || MEDIA_ERRORS[4]);
+  });
 
   // ---- formatting ---------------------------------------------------------
   const mmss = (s) => {
@@ -390,19 +456,62 @@
   };
 
   // ---- loading ------------------------------------------------------------
+  let currentObjectURL = null;
+
   function loadFile(file) {
     if (!file) return;
-    video.src = URL.createObjectURL(file);
+    lastFile = file;
+    if (currentObjectURL) URL.revokeObjectURL(currentObjectURL);
+    currentObjectURL = URL.createObjectURL(file);
+    video.src = currentObjectURL;
     video.style.display = "block";
     dropzone.style.display = "none";
     loaded = true;
     if (!videoId.value.trim()) {
       videoId.value = file.name.replace(/\.[^.]+$/, "").replace(/[^\w-]+/g, "_");
     }
+    loaderr.style.display = "none";
+    clearTimeout(loadTimer);
+
     video.addEventListener("loadedmetadata", () => {
+      clearTimeout(loadTimer);
       endLabel.textContent = mmss(video.duration);
       render();
     }, { once: true });
+
+    // Some failures fire no error event at all -- the element just sits there.
+    loadTimer = setTimeout(() => {
+      if (!video.duration) {
+        showError(file, "The file loaded but no video track was decoded.");
+      }
+    }, 10000);
+  }
+
+  function showError(file, detail) {
+    const ext = (file.name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
+    const unsupported = [".mkv", ".avi", ".ts", ".flv", ".wmv", ".mpg", ".mpeg"];
+    loaded = false;
+    video.style.display = "none";
+    dropzone.style.display = "none";
+    loaderr.style.display = "block";
+
+    let body;
+    if (unsupported.includes(ext)) {
+      body = `Browsers cannot play <code>${ext}</code> files. Only MP4 (H.264) `
+           + `and WebM work in a video element. Remux it &mdash; this is fast `
+           + `and lossless, it does not re-encode:`
+           + `<br><code>ffmpeg -i "${file.name}" -c copy "${file.name.replace(/\.[^.]+$/, "")}.mp4"</code>`
+           + `<div class="why">If that fails, the codec inside is probably `
+           + `HEVC/H.265, which browsers also reject. Re-encode instead:<br>`
+           + `<code>ffmpeg -i "${file.name}" -c:v libx264 -crf 20 -c:a aac out.mp4</code></div>`;
+    } else {
+      body = `${detail} The container may be fine but the codec unsupported &mdash; `
+           + `HEVC/H.265 and AC-3 audio are common culprits in broadcast files.`
+           + `<br><code>ffmpeg -i "${file.name}" -c:v libx264 -crf 20 -c:a aac out.mp4</code>`
+           + `<div class="why">Annotate the converted file, and extract features `
+           + `from that same file so the timestamps line up.</div>`;
+    }
+    document.getElementById("errBody").innerHTML = body;
   }
 
   document.getElementById("loadBtn").onclick = () => fileInput.click();
@@ -413,14 +522,139 @@
     stage.addEventListener(ev, (e) => { e.preventDefault(); stage.classList.add("dragover"); }));
   ["dragleave", "drop"].forEach((ev) =>
     stage.addEventListener(ev, (e) => { e.preventDefault(); stage.classList.remove("dragover"); }));
-  stage.addEventListener("drop", (e) => loadFile(e.dataTransfer.files[0]));
+  stage.addEventListener("drop", (e) => handleDrop(e.dataTransfer.files[0]));
+
+  function handleDrop(file) {
+    if (!file) return;
+    if (/\.csv$/i.test(file.name)) loadCSV(file);
+    else loadFile(file);
+  }
+
+  // ---- CSV import ---------------------------------------------------------
+  const statusEl = document.getElementById("status");
+
+  function setStatus(msg, kind) {
+    statusEl.className = "status" + (kind ? " " + kind : "");
+    statusEl.innerHTML = msg;
+  }
+
+  document.getElementById("csvBtn").onclick = () => csvInput.click();
+  csvInput.onchange = (e) => { loadCSV(e.target.files[0]); e.target.value = ""; };
+
+  function loadCSV(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onerror = () => setStatus("Could not read that file.", "bad");
+    reader.onload = () => {
+      const text = String(reader.result).replace(/^\uFEFF/, "");
+      const lines = text.split(/\r?\n/).filter((l) => l.trim().length);
+      if (!lines.length) return setStatus("That CSV is empty.", "bad");
+
+      const header = lines[0].split(",").map((s) => s.trim().toLowerCase());
+      const iVid = header.indexOf("video_id");
+      const iT   = header.indexOf("timestamp_s");
+      const iLab = header.indexOf("label");
+      if (iT === -1 || iLab === -1) {
+        return setStatus(
+          "Missing a <b>timestamp_s</b> or <b>label</b> column. Expected header: "
+          + "<code>video_id,timestamp_s,label</code>", "bad");
+      }
+
+      // Parse everything first, then decide -- a merged labels.csv holds many
+      // matches and we can only edit one at a time.
+      const parsed = [];
+      const byVideo = {};
+      let badRows = 0, unknown = {};
+
+      for (let i = 1; i < lines.length; i++) {
+        const cells = lines[i].split(",").map((s) => s.trim());
+        const t = parseFloat(cells[iT]);
+        const label = (cells[iLab] || "").toLowerCase();
+        const vid = iVid === -1 ? "" : (cells[iVid] || "");
+        if (!isFinite(t) || t < 0) { badRows++; continue; }
+        if (!Object.values(CLASSES).includes(label)) {
+          unknown[label || "(blank)"] = (unknown[label || "(blank)"] || 0) + 1;
+          continue;
+        }
+        parsed.push({ t, label, vid });
+        byVideo[vid] = (byVideo[vid] || 0) + 1;
+      }
+
+      if (!parsed.length) {
+        return setStatus("No usable rows found in that CSV.", "bad");
+      }
+
+      // Pick which match to edit when several are present.
+      const ids = Object.keys(byVideo);
+      let chosen = ids[0];
+      let note = "";
+      if (ids.length > 1) {
+        const current = videoId.value.trim();
+        chosen = ids.includes(current)
+          ? current
+          : ids.reduce((a, b) => (byVideo[b] > byVideo[a] ? b : a));
+        note = `<br>CSV holds ${ids.length} matches; loaded only `
+             + `<b>${chosen}</b>. Set video_id first to pick a different one.`;
+      }
+
+      const incoming = parsed
+        .filter((r) => r.vid === chosen)
+        .map((r) => ({ t: r.t, label: r.label }));
+
+      if (events.length && !confirm(
+            `Replace the ${events.length} mark(s) currently loaded with `
+            + `${incoming.length} from this CSV?`)) {
+        return;
+      }
+
+      events = incoming.sort((a, b) => a.t - b.t);
+      selected = -1;
+      if (chosen) videoId.value = chosen;
+      render();
+
+      let msg = `Loaded <b>${events.length}</b> marks`;
+      if (chosen) msg += ` for <b>${chosen}</b>`;
+      msg += ".";
+      const skipped = [];
+      if (badRows) skipped.push(`${badRows} unreadable timestamp(s)`);
+      for (const [lab, n] of Object.entries(unknown)) {
+        skipped.push(`${n} row(s) labelled "${lab}"`);
+      }
+      if (skipped.length) msg += ` Skipped ${skipped.join(", ")}.`;
+      msg += note;
+
+      // Timestamps past the end usually mean the CSV belongs to a different cut.
+      if (loaded && video.duration) {
+        const past = events.filter((e) => e.t > video.duration).length;
+        if (past) {
+          msg += `<br><b>${past} mark(s) fall past the end of the loaded video`
+               + ` (${mmss(video.duration)})</b> -- is this the same file?`;
+          return setStatus(msg, "bad");
+        }
+      }
+      setStatus(msg, skipped.length || note ? null : "good");
+    };
+    reader.readAsText(file);
+  }
 
   // ---- marking ------------------------------------------------------------
+  const DUPLICATE_WINDOW_S = 1.5;
+
   function mark(label) {
     if (!loaded) return;
-    events.push({ t: video.currentTime, label });
+    const t = video.currentTime;
+
+    // Holding or double-tapping the key while paused would otherwise log two
+    // marks at effectively the same instant. Select the existing one instead.
+    const near = events.findIndex(
+      (e) => e.label === label && Math.abs(e.t - t) < DUPLICATE_WINDOW_S
+    );
+    if (near !== -1) { select(near); return; }
+
+    const created = { t, label };
+    events.push(created);
     events.sort((a, b) => a.t - b.t);
-    selected = events.findIndex((e) => e.label === label && Math.abs(e.t - video.currentTime) < 1e-6);
+    selected = events.indexOf(created);
     render();
   }
 
@@ -539,8 +773,11 @@
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `${vid}_labels.csv`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(a.href);
+    // Revoking synchronously can cancel the download in some browsers --
+    // the fetch of the blob hasn't started yet when click() returns.
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
   };
 
   clearBtn.onclick = () => {

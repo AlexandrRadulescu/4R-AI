@@ -1,2 +1,7 @@
 features/
 validated_shots/
+splits.json
+split.json
+checkpoints/
+labels.csv
+validated_non_used/

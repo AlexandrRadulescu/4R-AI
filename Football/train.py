@@ -51,16 +51,43 @@ def run_validation(model, feature_dir, labels_csv, video_ids, device):
     return float(np.mean(f1s)), report
 
 
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--features", type=Path, default=Path("features"))
     ap.add_argument("--labels", type=Path, default=Path("labels.csv"))
-    ap.add_argument("--train-videos", nargs="+", required=True)
-    ap.add_argument("--val-videos", nargs="+", required=True)
+    ap.add_argument("--split", type=Path,
+                    help='JSON with {"train": [...], "val": [...]} '
+                         '-- use instead of listing every video by hand')
+    ap.add_argument("--train-videos", nargs="+")
+    ap.add_argument("--val-videos", nargs="+")
     ap.add_argument("--epochs", type=int, default=EPOCHS)
     ap.add_argument("--out", type=Path, default=Path("checkpoints"))
-    ap.add_argument("--run-name", default=None, help="label for this run inside history.json")
+    ap.add_argument("--run-name", default=None,
+                    help="label for this run inside history.json")
     args = ap.parse_args()
+ 
+
+    if args.split:
+        if args.train_videos or args.val_videos:
+            ap.error("--split cannot be combined with --train-videos/--val-videos")
+        spec = json.loads(args.split.read_text())
+        for key in ("train", "val"):
+            if key not in spec:
+                ap.error(f"{args.split} has no '{key}' key")
+
+        # Tolerate entries written as filenames rather than bare ids.
+        strip = lambda n: n[:-4] if n.lower().endswith(".npy") else n
+        args.train_videos = [strip(n) for n in spec["train"]]
+        args.val_videos = [strip(n) for n in spec["val"]]
+    elif not (args.train_videos and args.val_videos):
+        ap.error("give either --split, or both --train-videos and --val-videos")
+ 
+    overlap = set(args.train_videos) & set(args.val_videos)
+    if overlap:
+        ap.error(f"these appear in BOTH train and val: {sorted(overlap)}")
+ 
+    print(f"{len(args.train_videos)} train / {len(args.val_videos)} val matches")
  
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"device: {device}")
@@ -127,7 +154,7 @@ def main():
         history.log_epoch(epoch, mean_loss, lr_now, time.perf_counter() - tick)
         line = f"epoch {epoch:3d}  loss {mean_loss:.4f}"
  
-        if epoch % 5 == 0 or epoch == args.epochs:
+        if epoch % 2 == 0 or epoch == args.epochs:
             mean_f1, report = run_validation(
                 model, args.features, args.labels, args.val_videos, device
             )
