@@ -1,10 +1,108 @@
+
+/
+Claude finished the response
+
+Weighed browser conversion limitations, pivoted toward local ffmpeg solution
+Weighed browser conversion limitations, pivoted toward local ffmpeg solution
+In-browser conversion isn't viable for full matches, and it's worth being clear why rather than building something that fails on you: ffmpeg.wasm loads the entire file into WebAssembly memory, which caps out around 2 GB in practice. A 90-minute 1080p rip is several gigabytes. It would work on a 5-minute clip and crash on everything you actually have.
+
+But your real problem is just getting ffmpeg, and there's a way around that — a pip package that ships a working binary:
+
+
+Test whether imageio-ffmpeg provides a usable bundled binary
+Test whether imageio-ffmpeg provides a usable bundled binary
+One pip install and you have a working ffmpeg with no PATH configuration. It doesn't ship ffprobe though, so let me rewrite the probing to use ffmpeg alone:
+
+
+Ran 3 commands, created a file, read a file
+Ran 3 commands, created a file, read a file
+cmd
+pip install imageio-ffmpeg
+python remux.py --video-dir "D:\DATA_AI\MATCHES" --dry-run
+That's it — no download, no zip, no environment variables. Both files go next to your other scripts; remux.py imports ffmpeg_tool.py.
+
+I tested this by deleting ffmpeg from the container's PATH entirely. It fell through to the bundled binary, correctly classified all three files, and converted them. It prints which one it's using on startup, so you'll see ffmpeg: bundled (imageio-ffmpeg).
+
+The other change: ffprobe is gone. The pip package ships only ffmpeg, so stream detection now parses ffmpeg's own output instead. One binary covers everything.
+
+A system install is still better if you can manage it — winget install Gyan.FFmpeg, then reopen the terminal. The bundled build is a general-purpose one and may be slower on the re-encode path. remux.py prefers PATH whenever it finds it, so installing later needs no code change.
+
+Worth knowing: make_reel.py also shells out to ffmpeg for cutting clips, and it still expects it on PATH. That's the final step of the whole pipeline, so it'll need the same treatment eventually — say the word and I'll rewire it onto ffmpeg_tool.py too.
+
+
+Remux
+PY 
+
+Ffmpeg tool
+PY 
+ModuleNotFoundError: No module named 'ffmpeg_tool'
+
+Also can you save the videos in the same folder as the source?
+
+
+Diagnosed module import issue and verified default save location
+Diagnosed module import issue and verified default save location
+It already does that. Line 78: out_dir = args.out_dir or args.video_dir — with no --out-dir, output goes straight into the source folder, so your converted files land in D:\DATA_AI\MATCHES alongside the originals. Nothing to change.
+
+The import error is the folder split again. You're running from E:\PROJECTS\AIs\Football\Annotator\, and Python only searches the script's own directory — so remux.py there can't see ffmpeg_tool.py unless it's in that same folder. Same cause as the config.py error a few messages back.
+
+Put every .py in one place:
+
+cmd
+move E:\PROJECTS\AIs\Football\Annotator\*.py E:\PROJECTS\AIs\Football\
+cd E:\PROJECTS\AIs\Football
+python remux.py --video-dir "D:\DATA_AI\MATCHES" --dry-run
+Annotator\ should contain only annotate.html, which imports nothing.
+
+This will keep biting otherwise — remux.py needs ffmpeg_tool.py, train.py needs config, dataset, model, history and postprocess, and diagnose.py needs most of those too. One flat folder makes all of it work.
+
+
+<meta charset="utf-8"> <meta name="viewport" content="width=device-width, initial-scale=1"> <title>Match Annotator</title> <link rel="preconnect" href="https://fonts.googleapis.com"> <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin> <link href="https://fonts.googleapis.com/cs
+
+pasted
+
+
+
+Message collapsed
+
+Weighed reversion request while diagnosing underlying codec incompatibility issue
+Weighed reversion request while diagnosing underlying codec incompatibility issue
+Fair enough — reverting to that exact version with only CSV loading added.
+
+
+Ran 2 commands, created a file, read a file
+Ran 2 commands, created a file, read a file
+Exactly your version, plus a Load CSV button. Dropping a .csv on the video area works too — it routes by extension. Everything else is byte-for-byte what you pasted: original tick CSS, original file accept, no error panel, no duplicate guard.
+
+Load the video first, then the CSV, and your marks reappear on the ribbon. A small status line under the export buttons reports what came in and what got skipped.
+
+Two behaviours: it replaces rather than merges (with a confirm if you'd already logged marks), and if you drop a merged labels.csv containing many matches it loads the largest one and says so — type the video_id first to pick a different one.
+
+One thing the revert removes is the explanation, not the problem. That "no video track was decoded" message was correct: Dinamo Bucaresti vs U Craiova.mp4 has an MP4 extension but a codec the browser can't decode — almost certainly HEVC. It was probably remuxed with -c copy, which changes the wrapper and leaves the codec alone. That file needs a real re-encode:
+
+cmd
+ffmpeg -i "Dinamo Bucaresti vs U Craiova.mp4" -c:v libx264 -crf 22 -c:a aac "dinamo_craiova_h264.mp4"
+With the old annotator back, that file will now just sit black instead of telling you why — so if a match won't play, re-encoding it is the first thing to try.
+
+
+Annotate
+Code · HTML 
+
+
+
+
+
+Claude is AI and can make mistakes. Please double-check responses.
+
+
+Annotate · HTML
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Match Annotator</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-
+ 
 <style>
   :root {
     --ground:  #0F1E1D;
@@ -20,9 +118,9 @@
     --mono:    "IBM Plex Mono", ui-monospace, Menlo, monospace;
     --body:    system-ui, -apple-system, "Segoe UI", sans-serif;
   }
-
+ 
   * { box-sizing: border-box; }
-
+ 
   body {
     margin: 0;
     background: var(--ground);
@@ -31,13 +129,13 @@
     font-size: 14px;
     -webkit-font-smoothing: antialiased;
   }
-
+ 
   .wrap {
     max-width: 1160px;
     margin: 0 auto;
     padding: 20px 24px 48px;
   }
-
+ 
   /* ---- header ---- */
   header {
     display: flex;
@@ -47,7 +145,7 @@
     padding-bottom: 14px;
     border-bottom: 1px solid var(--line);
   }
-
+ 
   h1 {
     font-family: var(--display);
     font-weight: 700;
@@ -57,9 +155,9 @@
     margin: 0;
     line-height: 1;
   }
-
+ 
   .field { display: flex; flex-direction: column; gap: 4px; }
-
+ 
   label {
     font-family: var(--display);
     font-size: 13px;
@@ -67,7 +165,7 @@
     text-transform: uppercase;
     color: var(--muted);
   }
-
+ 
   input[type=text] {
     background: var(--surface);
     border: 1px solid var(--line);
@@ -77,14 +175,14 @@
     font-size: 13px;
     padding: 7px 10px;
   }
-
+ 
   input[type=text]:focus-visible,
   button:focus-visible,
   .tick:focus-visible { outline: 2px solid var(--goal); outline-offset: 2px; }
-
+ 
   #videoId { width: 230px; }
   #anchorRule { width: 300px; }
-
+ 
   button {
     background: var(--raised);
     border: 1px solid var(--line);
@@ -100,10 +198,10 @@
   }
   button:hover:not(:disabled) { background: var(--line); border-color: var(--muted); }
   button:disabled { opacity: 0.35; cursor: default; }
-
+ 
   button.primary { background: var(--goal); border-color: var(--goal); color: #1A1200; font-weight: 600; }
   button.primary:hover:not(:disabled) { background: #FFC757; border-color: #FFC757; }
-
+ 
   /* ---- stage ---- */
   .stage {
     margin-top: 20px;
@@ -118,7 +216,7 @@
     position: relative;
   }
   video { width: 100%; height: 100%; display: none; }
-
+ 
   .dropzone {
     text-align: center;
     color: var(--muted);
@@ -134,36 +232,7 @@
     margin-bottom: 8px;
   }
   .stage.dragover { border-color: var(--goal); }
-
-  .loaderr {
-    display: none;
-    text-align: left;
-    max-width: 560px;
-    padding: 26px;
-    color: var(--chalk);
-    font-size: 13.5px;
-    line-height: 1.65;
-  }
-  .loaderr strong {
-    display: block;
-    font-family: var(--display);
-    font-size: 20px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--card);
-    margin-bottom: 10px;
-  }
-  .loaderr code {
-    font-family: var(--mono);
-    font-size: 12px;
-    background: var(--raised);
-    padding: 2px 6px;
-    border-radius: 3px;
-    display: inline-block;
-    margin-top: 6px;
-  }
-  .loaderr .why { color: var(--muted); margin-top: 10px; }
-
+ 
   /* ---- clock ---- */
   .clockrow {
     display: flex;
@@ -181,7 +250,7 @@
   }
   .clock .frac { color: var(--muted); font-size: 26px; }
   .rate { font-family: var(--mono); font-size: 13px; color: var(--muted); }
-
+ 
   /* ---- coverage ribbon: the signature element ---- */
   .ribbon {
     position: relative;
@@ -199,7 +268,7 @@
   }
   .tick {
     position: absolute;
-    top: 7px; height: 13px;
+    top: 6px; bottom: 6px;
     width: 3px;
     margin-left: -1px;
     border: 0;
@@ -208,8 +277,8 @@
     cursor: pointer;
   }
   .tick.goal { background: var(--goal); }
-  .tick.shot { background: var(--shot); top: 23px; }
-  .tick.card { background: var(--card); top: 39px; }
+  .tick.shot { background: var(--shot); top: 20px; }
+  .tick.card { background: var(--card); top: 33px; }
   .tick.sel  { box-shadow: 0 0 0 2px var(--chalk); }
   .playhead {
     position: absolute; top: 0; bottom: 0;
@@ -222,7 +291,7 @@
     font-family: var(--mono); font-size: 11px; color: var(--muted);
     margin-top: 5px;
   }
-
+ 
   /* ---- lower panels ---- */
   .panels {
     display: grid;
@@ -231,7 +300,7 @@
     margin-top: 24px;
   }
   @media (max-width: 820px) { .panels { grid-template-columns: 1fr; } }
-
+ 
   h2 {
     font-family: var(--display);
     font-size: 14px;
@@ -241,7 +310,7 @@
     margin: 0 0 10px;
     font-weight: 600;
   }
-
+ 
   .keys { display: flex; flex-direction: column; gap: 7px; }
   .keyrow { display: flex; align-items: center; gap: 10px; }
   kbd {
@@ -257,7 +326,7 @@
   }
   .keyrow span { color: var(--muted); font-size: 13px; }
   .swatch { width: 9px; height: 9px; border-radius: 2px; }
-
+ 
   .tally { display: flex; gap: 18px; margin-bottom: 14px; }
   .tally div { display: flex; align-items: baseline; gap: 6px; }
   .tally .n {
@@ -268,7 +337,7 @@
     font-family: var(--display); font-size: 12px; letter-spacing: 0.14em;
     text-transform: uppercase; color: var(--muted);
   }
-
+ 
   .log {
     max-height: 260px;
     overflow-y: auto;
@@ -298,32 +367,31 @@
     cursor: pointer; line-height: 1;
   }
   .entry .del:hover { color: var(--card); }
-
+ 
   .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
-
+ 
   .status {
     margin-top: 10px;
     font-family: var(--mono);
     font-size: 11.5px;
     line-height: 1.55;
     color: var(--muted);
-    min-height: 18px;
+    min-height: 17px;
   }
   .status.bad { color: var(--card); }
-  .status.good { color: var(--goal); }
-
+ 
   .note {
     margin-top: 22px; padding-top: 14px;
     border-top: 1px solid var(--line);
     color: var(--muted); font-size: 12.5px; line-height: 1.6;
   }
   .note b { color: var(--chalk); font-weight: 600; }
-
+ 
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; }
   }
 </style>
-
+ 
 <div class="wrap">
   <header>
     <h1>Match Annotator</h1>
@@ -337,28 +405,24 @@
     </div>
     <button id="loadBtn">Load video</button>
     <button id="csvBtn">Load CSV</button>
+    <input type="file" id="fileInput" accept="video/*" hidden>
     <input type="file" id="csvInput" accept=".csv,text/csv" hidden>
-    <input type="file" id="fileInput" accept="video/*,.mkv,.avi,.ts,.m4v,.mov,.webm" hidden>
   </header>
-
+ 
   <div class="stage" id="stage">
     <video id="video" playsinline></video>
     <div class="dropzone" id="dropzone">
       <strong>Drop a match file here</strong>
       Nothing is uploaded &mdash; the video is read locally by your browser.
-      <br>Drop a <b>.csv</b> here to reload marks you exported earlier.
-    </div>
-    <div class="loaderr" id="loaderr">
-      <strong id="errTitle">Cannot play this file</strong>
-      <span id="errBody"></span>
+      <br>Drop a <b>.csv</b> to reload marks you exported earlier.
     </div>
   </div>
-
+ 
   <div class="clockrow">
     <div class="clock" id="clock">00:00<span class="frac">.0</span></div>
     <div class="rate" id="rate">paused &middot; 1&times;</div>
   </div>
-
+ 
   <div class="ribbon" id="ribbon">
     <div class="half"></div>
     <div class="playhead" id="playhead" style="left:0"></div>
@@ -366,7 +430,7 @@
   <div class="ribbon-labels">
     <span>kick-off</span><span id="endLabel">&mdash;</span>
   </div>
-
+ 
   <div class="panels">
     <section>
       <h2>Keys</h2>
@@ -382,7 +446,7 @@
         <div class="keyrow"><kbd>X</kbd><span>delete selected mark</span></div>
       </div>
     </section>
-
+ 
     <section>
       <h2>Logged</h2>
       <div class="tally">
@@ -398,7 +462,7 @@
       <div class="status" id="status"></div>
     </section>
   </div>
-
+ 
   <p class="note">
     <b>Workflow:</b> skim at 4&times;, and when something happens hit <kbd>space</kbd>,
     step back with <kbd>shift</kbd>+<kbd>&larr;</kbd>, then frame in on the anchor
@@ -408,15 +472,16 @@
     them into a single <code>labels.csv</code> afterwards, keeping just one header row.
   </p>
 </div>
-
+ 
 <script>
 (function () {
   const CLASSES = { g: "goal", s: "shot", c: "card" };
-
+ 
   const video    = document.getElementById("video");
   const stage    = document.getElementById("stage");
   const dropzone = document.getElementById("dropzone");
   const fileInput= document.getElementById("fileInput");
+  const csvInput = document.getElementById("csvInput");
   const ribbon   = document.getElementById("ribbon");
   const playhead = document.getElementById("playhead");
   const clockEl  = document.getElementById("clock");
@@ -426,238 +491,152 @@
   const videoId  = document.getElementById("videoId");
   const exportBtn= document.getElementById("exportBtn");
   const clearBtn = document.getElementById("clearBtn");
-  const csvInput = document.getElementById("csvInput");
-
-  const loaderr  = document.getElementById("loaderr");
-
+  const statusEl = document.getElementById("status");
+ 
   let events = [];      // [{t, label}]
   let selected = -1;
   let loaded = false;
-  let loadTimer = null;
-  let lastFile = null;
-
-  const MEDIA_ERRORS = {
-    1: "Loading was aborted.",
-    2: "A network error occurred while reading the file.",
-    3: "The file decoded partially then failed.",
-    4: "This browser cannot decode the file's format.",
-  };
-
-  video.addEventListener("error", () => {
-    clearTimeout(loadTimer);
-    const code = video.error ? video.error.code : 4;
-    if (lastFile) showError(lastFile, MEDIA_ERRORS[code] || MEDIA_ERRORS[4]);
-  });
-
+ 
   // ---- formatting ---------------------------------------------------------
   const mmss = (s) => {
     const m = Math.floor(s / 60), sec = Math.floor(s % 60);
     return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
   };
-
+ 
+  function setStatus(msg, bad) {
+    statusEl.className = "status" + (bad ? " bad" : "");
+    statusEl.innerHTML = msg || "";
+  }
+ 
   // ---- loading ------------------------------------------------------------
-  let currentObjectURL = null;
-
   function loadFile(file) {
     if (!file) return;
-    lastFile = file;
-    if (currentObjectURL) URL.revokeObjectURL(currentObjectURL);
-    currentObjectURL = URL.createObjectURL(file);
-    video.src = currentObjectURL;
+    video.src = URL.createObjectURL(file);
     video.style.display = "block";
     dropzone.style.display = "none";
     loaded = true;
     if (!videoId.value.trim()) {
       videoId.value = file.name.replace(/\.[^.]+$/, "").replace(/[^\w-]+/g, "_");
     }
-    loaderr.style.display = "none";
-    clearTimeout(loadTimer);
-
     video.addEventListener("loadedmetadata", () => {
-      clearTimeout(loadTimer);
       endLabel.textContent = mmss(video.duration);
       render();
     }, { once: true });
-
-    // Some failures fire no error event at all -- the element just sits there.
-    loadTimer = setTimeout(() => {
-      if (!video.duration) {
-        showError(file, "The file loaded but no video track was decoded.");
-      }
-    }, 10000);
   }
-
-  function showError(file, detail) {
-    const ext = (file.name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
-    const unsupported = [".mkv", ".avi", ".ts", ".flv", ".wmv", ".mpg", ".mpeg"];
-    loaded = false;
-    video.style.display = "none";
-    dropzone.style.display = "none";
-    loaderr.style.display = "block";
-
-    let body;
-    if (unsupported.includes(ext)) {
-      body = `Browsers cannot play <code>${ext}</code> files. Only MP4 (H.264) `
-           + `and WebM work in a video element. Remux it &mdash; this is fast `
-           + `and lossless, it does not re-encode:`
-           + `<br><code>ffmpeg -i "${file.name}" -c copy "${file.name.replace(/\.[^.]+$/, "")}.mp4"</code>`
-           + `<div class="why">If that fails, the codec inside is probably `
-           + `HEVC/H.265, which browsers also reject. Re-encode instead:<br>`
-           + `<code>ffmpeg -i "${file.name}" -c:v libx264 -crf 20 -c:a aac out.mp4</code></div>`;
-    } else {
-      body = `${detail} The container may be fine but the codec unsupported &mdash; `
-           + `HEVC/H.265 and AC-3 audio are common culprits in broadcast files.`
-           + `<br><code>ffmpeg -i "${file.name}" -c:v libx264 -crf 20 -c:a aac out.mp4</code>`
-           + `<div class="why">Annotate the converted file, and extract features `
-           + `from that same file so the timestamps line up.</div>`;
-    }
-    document.getElementById("errBody").innerHTML = body;
-  }
-
+ 
   document.getElementById("loadBtn").onclick = () => fileInput.click();
+  document.getElementById("csvBtn").onclick = () => csvInput.click();
   dropzone.onclick = () => fileInput.click();
   fileInput.onchange = (e) => loadFile(e.target.files[0]);
-
+  csvInput.onchange = (e) => { loadCSV(e.target.files[0]); e.target.value = ""; };
+ 
   ["dragenter", "dragover"].forEach((ev) =>
     stage.addEventListener(ev, (e) => { e.preventDefault(); stage.classList.add("dragover"); }));
   ["dragleave", "drop"].forEach((ev) =>
     stage.addEventListener(ev, (e) => { e.preventDefault(); stage.classList.remove("dragover"); }));
-  stage.addEventListener("drop", (e) => handleDrop(e.dataTransfer.files[0]));
-
-  function handleDrop(file) {
+  stage.addEventListener("drop", (e) => {
+    const file = e.dataTransfer.files[0];
     if (!file) return;
     if (/\.csv$/i.test(file.name)) loadCSV(file);
     else loadFile(file);
-  }
-
+  });
+ 
   // ---- CSV import ---------------------------------------------------------
-  const statusEl = document.getElementById("status");
-
-  function setStatus(msg, kind) {
-    statusEl.className = "status" + (kind ? " " + kind : "");
-    statusEl.innerHTML = msg;
-  }
-
-  document.getElementById("csvBtn").onclick = () => csvInput.click();
-  csvInput.onchange = (e) => { loadCSV(e.target.files[0]); e.target.value = ""; };
-
   function loadCSV(file) {
     if (!file) return;
     const reader = new FileReader();
-    reader.onerror = () => setStatus("Could not read that file.", "bad");
+    reader.onerror = () => setStatus("Could not read that file.", true);
     reader.onload = () => {
       const text = String(reader.result).replace(/^\uFEFF/, "");
       const lines = text.split(/\r?\n/).filter((l) => l.trim().length);
-      if (!lines.length) return setStatus("That CSV is empty.", "bad");
-
+      if (!lines.length) return setStatus("That CSV is empty.", true);
+ 
       const header = lines[0].split(",").map((s) => s.trim().toLowerCase());
       const iVid = header.indexOf("video_id");
       const iT   = header.indexOf("timestamp_s");
       const iLab = header.indexOf("label");
       if (iT === -1 || iLab === -1) {
-        return setStatus(
-          "Missing a <b>timestamp_s</b> or <b>label</b> column. Expected header: "
-          + "<code>video_id,timestamp_s,label</code>", "bad");
+        return setStatus("Expected a header row: "
+          + "<code>video_id,timestamp_s,label</code>", true);
       }
-
-      // Parse everything first, then decide -- a merged labels.csv holds many
-      // matches and we can only edit one at a time.
-      const parsed = [];
-      const byVideo = {};
-      let badRows = 0, unknown = {};
-
+ 
+      const known = Object.values(CLASSES);
+      const parsed = [], byVideo = {}, unknown = {};
+      let badRows = 0;
+ 
       for (let i = 1; i < lines.length; i++) {
         const cells = lines[i].split(",").map((s) => s.trim());
         const t = parseFloat(cells[iT]);
         const label = (cells[iLab] || "").toLowerCase();
         const vid = iVid === -1 ? "" : (cells[iVid] || "");
         if (!isFinite(t) || t < 0) { badRows++; continue; }
-        if (!Object.values(CLASSES).includes(label)) {
-          unknown[label || "(blank)"] = (unknown[label || "(blank)"] || 0) + 1;
+        if (!known.includes(label)) {
+          const key = label || "(blank)";
+          unknown[key] = (unknown[key] || 0) + 1;
           continue;
         }
         parsed.push({ t, label, vid });
         byVideo[vid] = (byVideo[vid] || 0) + 1;
       }
-
-      if (!parsed.length) {
-        return setStatus("No usable rows found in that CSV.", "bad");
-      }
-
-      // Pick which match to edit when several are present.
+ 
+      if (!parsed.length) return setStatus("No usable rows in that CSV.", true);
+ 
+      // A merged labels.csv holds many matches; only one can be edited here.
       const ids = Object.keys(byVideo);
-      let chosen = ids[0];
-      let note = "";
+      let chosen = ids[0], note = "";
       if (ids.length > 1) {
         const current = videoId.value.trim();
         chosen = ids.includes(current)
           ? current
           : ids.reduce((a, b) => (byVideo[b] > byVideo[a] ? b : a));
-        note = `<br>CSV holds ${ids.length} matches; loaded only `
-             + `<b>${chosen}</b>. Set video_id first to pick a different one.`;
+        note = `<br>CSV holds ${ids.length} matches; loaded <b>${chosen}</b> only. `
+             + `Set video_id first to pick a different one.`;
       }
-
-      const incoming = parsed
-        .filter((r) => r.vid === chosen)
-        .map((r) => ({ t: r.t, label: r.label }));
-
+ 
+      const incoming = parsed.filter((r) => r.vid === chosen)
+                             .map((r) => ({ t: r.t, label: r.label }));
+ 
       if (events.length && !confirm(
             `Replace the ${events.length} mark(s) currently loaded with `
-            + `${incoming.length} from this CSV?`)) {
-        return;
-      }
-
+            + `${incoming.length} from this CSV?`)) return;
+ 
       events = incoming.sort((a, b) => a.t - b.t);
       selected = -1;
       if (chosen) videoId.value = chosen;
       render();
-
+ 
       let msg = `Loaded <b>${events.length}</b> marks`;
       if (chosen) msg += ` for <b>${chosen}</b>`;
       msg += ".";
       const skipped = [];
-      if (badRows) skipped.push(`${badRows} unreadable timestamp(s)`);
+      if (badRows) skipped.push(`${badRows} bad timestamp(s)`);
       for (const [lab, n] of Object.entries(unknown)) {
         skipped.push(`${n} row(s) labelled "${lab}"`);
       }
       if (skipped.length) msg += ` Skipped ${skipped.join(", ")}.`;
       msg += note;
-
-      // Timestamps past the end usually mean the CSV belongs to a different cut.
+ 
       if (loaded && video.duration) {
         const past = events.filter((e) => e.t > video.duration).length;
         if (past) {
-          msg += `<br><b>${past} mark(s) fall past the end of the loaded video`
-               + ` (${mmss(video.duration)})</b> -- is this the same file?`;
-          return setStatus(msg, "bad");
+          return setStatus(msg + `<br><b>${past} mark(s) land past the end of `
+            + `the loaded video (${mmss(video.duration)})</b> — different cut?`, true);
         }
       }
-      setStatus(msg, skipped.length || note ? null : "good");
+      setStatus(msg, skipped.length > 0);
     };
     reader.readAsText(file);
   }
-
+ 
   // ---- marking ------------------------------------------------------------
-  const DUPLICATE_WINDOW_S = 1.5;
-
   function mark(label) {
     if (!loaded) return;
-    const t = video.currentTime;
-
-    // Holding or double-tapping the key while paused would otherwise log two
-    // marks at effectively the same instant. Select the existing one instead.
-    const near = events.findIndex(
-      (e) => e.label === label && Math.abs(e.t - t) < DUPLICATE_WINDOW_S
-    );
-    if (near !== -1) { select(near); return; }
-
-    const created = { t, label };
-    events.push(created);
+    events.push({ t: video.currentTime, label });
     events.sort((a, b) => a.t - b.t);
-    selected = events.indexOf(created);
+    selected = events.findIndex((e) => e.label === label && Math.abs(e.t - video.currentTime) < 1e-6);
     render();
   }
-
+ 
   function nudge(delta) {
     if (selected < 0) return;
     events[selected].t = Math.max(0, Math.min(video.duration || 1e9, events[selected].t + delta));
@@ -667,18 +646,18 @@
     video.currentTime = moved.t;
     render();
   }
-
+ 
   function removeSelected() {
     if (selected < 0) return;
     events.splice(selected, 1);
     selected = -1;
     render();
   }
-
+ 
   // ---- rendering ----------------------------------------------------------
   function render() {
     const dur = video.duration || 0;
-
+ 
     ribbon.querySelectorAll(".tick").forEach((n) => n.remove());
     events.forEach((ev, i) => {
       const tick = document.createElement("button");
@@ -689,7 +668,7 @@
       tick.onclick = (e) => { e.stopPropagation(); select(i); };
       ribbon.appendChild(tick);
     });
-
+ 
     logEl.innerHTML = "";
     events.forEach((ev, i) => {
       const row = document.createElement("div");
@@ -707,21 +686,21 @@
       row.appendChild(del);
       logEl.appendChild(row);
     });
-
+ 
     for (const [key, label] of Object.entries(CLASSES)) {
       document.getElementById("n" + label[0].toUpperCase() + label.slice(1))
         .textContent = events.filter((e) => e.label === label).length;
     }
-
+ 
     exportBtn.disabled = clearBtn.disabled = events.length === 0;
   }
-
+ 
   function select(i) {
     selected = i;
     if (loaded) video.currentTime = events[i].t;
     render();
   }
-
+ 
   function tickClock() {
     const t = video.currentTime || 0;
     const dur = video.duration || 0;
@@ -731,20 +710,20 @@
     requestAnimationFrame(tickClock);
   }
   requestAnimationFrame(tickClock);
-
+ 
   ribbon.onclick = (e) => {
     if (!loaded || !video.duration) return;
     const rect = ribbon.getBoundingClientRect();
     video.currentTime = ((e.clientX - rect.left) / rect.width) * video.duration;
   };
-
+ 
   // ---- keyboard -----------------------------------------------------------
   document.addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT") return;
     const k = e.key.toLowerCase();
-
+ 
     if (CLASSES[k]) { e.preventDefault(); mark(CLASSES[k]); return; }
-
+ 
     switch (k) {
       case " ":
         e.preventDefault();
@@ -763,7 +742,7 @@
       case "4": video.playbackRate = 8; break;
     }
   });
-
+ 
   // ---- export -------------------------------------------------------------
   exportBtn.onclick = () => {
     const vid = (videoId.value.trim() || "match").replace(/[^\w-]+/g, "_");
@@ -773,23 +752,21 @@
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `${vid}_labels.csv`;
-    document.body.appendChild(a);
     a.click();
-    // Revoking synchronously can cancel the download in some browsers --
-    // the fetch of the blob hasn't started yet when click() returns.
-    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
+    URL.revokeObjectURL(a.href);
   };
-
+ 
   clearBtn.onclick = () => {
     if (confirm(`Delete all ${events.length} marks? This cannot be undone.`)) {
       events = []; selected = -1; render();
     }
   };
-
+ 
   window.addEventListener("beforeunload", (e) => {
     if (events.length) { e.preventDefault(); e.returnValue = ""; }
   });
-
+ 
   render();
 })();
 </script>
+ 
