@@ -272,16 +272,6 @@
 
   .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
 
-  .status {
-    margin-top: 10px;
-    font-family: var(--mono);
-    font-size: 11.5px;
-    line-height: 1.55;
-    color: var(--muted);
-    min-height: 17px;
-  }
-  .status.bad { color: var(--card); }
-
   .note {
     margin-top: 22px; padding-top: 14px;
     border-top: 1px solid var(--line);
@@ -306,9 +296,7 @@
       <input type="text" id="anchorRule" value="moment of contact / ball crosses line">
     </div>
     <button id="loadBtn">Load video</button>
-    <button id="csvBtn">Load CSV</button>
     <input type="file" id="fileInput" accept="video/*" hidden>
-    <input type="file" id="csvInput" accept=".csv,text/csv" hidden>
   </header>
 
   <div class="stage" id="stage">
@@ -316,7 +304,6 @@
     <div class="dropzone" id="dropzone">
       <strong>Drop a match file here</strong>
       Nothing is uploaded &mdash; the video is read locally by your browser.
-      <br>Drop a <b>.csv</b> to reload marks you exported earlier.
     </div>
   </div>
 
@@ -359,9 +346,10 @@
       <div class="log" id="log"></div>
       <div class="actions">
         <button class="primary" id="exportBtn" disabled>Export CSV</button>
+        <button id="importBtn">Import CSV</button>
         <button id="clearBtn" disabled>Clear all</button>
+        <input type="file" id="csvInput" accept=".csv,text/csv" hidden>
       </div>
-      <div class="status" id="status"></div>
     </section>
   </div>
 
@@ -383,7 +371,6 @@
   const stage    = document.getElementById("stage");
   const dropzone = document.getElementById("dropzone");
   const fileInput= document.getElementById("fileInput");
-  const csvInput = document.getElementById("csvInput");
   const ribbon   = document.getElementById("ribbon");
   const playhead = document.getElementById("playhead");
   const clockEl  = document.getElementById("clock");
@@ -393,7 +380,6 @@
   const videoId  = document.getElementById("videoId");
   const exportBtn= document.getElementById("exportBtn");
   const clearBtn = document.getElementById("clearBtn");
-  const statusEl = document.getElementById("status");
 
   let events = [];      // [{t, label}]
   let selected = -1;
@@ -404,11 +390,6 @@
     const m = Math.floor(s / 60), sec = Math.floor(s % 60);
     return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
   };
-
-  function setStatus(msg, bad) {
-    statusEl.className = "status" + (bad ? " bad" : "");
-    statusEl.innerHTML = msg || "";
-  }
 
   // ---- loading ------------------------------------------------------------
   function loadFile(file) {
@@ -427,108 +408,14 @@
   }
 
   document.getElementById("loadBtn").onclick = () => fileInput.click();
-  document.getElementById("csvBtn").onclick = () => csvInput.click();
   dropzone.onclick = () => fileInput.click();
   fileInput.onchange = (e) => loadFile(e.target.files[0]);
-  csvInput.onchange = (e) => { loadCSV(e.target.files[0]); e.target.value = ""; };
 
   ["dragenter", "dragover"].forEach((ev) =>
     stage.addEventListener(ev, (e) => { e.preventDefault(); stage.classList.add("dragover"); }));
   ["dragleave", "drop"].forEach((ev) =>
     stage.addEventListener(ev, (e) => { e.preventDefault(); stage.classList.remove("dragover"); }));
-  stage.addEventListener("drop", (e) => {
-    const file = e.dataTransfer.files[0];
-    if (!file) return;
-    if (/\.csv$/i.test(file.name)) loadCSV(file);
-    else loadFile(file);
-  });
-
-  // ---- CSV import ---------------------------------------------------------
-  function loadCSV(file) {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onerror = () => setStatus("Could not read that file.", true);
-    reader.onload = () => {
-      const text = String(reader.result).replace(/^\uFEFF/, "");
-      const lines = text.split(/\r?\n/).filter((l) => l.trim().length);
-      if (!lines.length) return setStatus("That CSV is empty.", true);
-
-      const header = lines[0].split(",").map((s) => s.trim().toLowerCase());
-      const iVid = header.indexOf("video_id");
-      const iT   = header.indexOf("timestamp_s");
-      const iLab = header.indexOf("label");
-      if (iT === -1 || iLab === -1) {
-        return setStatus("Expected a header row: "
-          + "<code>video_id,timestamp_s,label</code>", true);
-      }
-
-      const known = Object.values(CLASSES);
-      const parsed = [], byVideo = {}, unknown = {};
-      let badRows = 0;
-
-      for (let i = 1; i < lines.length; i++) {
-        const cells = lines[i].split(",").map((s) => s.trim());
-        const t = parseFloat(cells[iT]);
-        const label = (cells[iLab] || "").toLowerCase();
-        const vid = iVid === -1 ? "" : (cells[iVid] || "");
-        if (!isFinite(t) || t < 0) { badRows++; continue; }
-        if (!known.includes(label)) {
-          const key = label || "(blank)";
-          unknown[key] = (unknown[key] || 0) + 1;
-          continue;
-        }
-        parsed.push({ t, label, vid });
-        byVideo[vid] = (byVideo[vid] || 0) + 1;
-      }
-
-      if (!parsed.length) return setStatus("No usable rows in that CSV.", true);
-
-      // A merged labels.csv holds many matches; only one can be edited here.
-      const ids = Object.keys(byVideo);
-      let chosen = ids[0], note = "";
-      if (ids.length > 1) {
-        const current = videoId.value.trim();
-        chosen = ids.includes(current)
-          ? current
-          : ids.reduce((a, b) => (byVideo[b] > byVideo[a] ? b : a));
-        note = `<br>CSV holds ${ids.length} matches; loaded <b>${chosen}</b> only. `
-             + `Set video_id first to pick a different one.`;
-      }
-
-      const incoming = parsed.filter((r) => r.vid === chosen)
-                             .map((r) => ({ t: r.t, label: r.label }));
-
-      if (events.length && !confirm(
-            `Replace the ${events.length} mark(s) currently loaded with `
-            + `${incoming.length} from this CSV?`)) return;
-
-      events = incoming.sort((a, b) => a.t - b.t);
-      selected = -1;
-      if (chosen) videoId.value = chosen;
-      render();
-
-      let msg = `Loaded <b>${events.length}</b> marks`;
-      if (chosen) msg += ` for <b>${chosen}</b>`;
-      msg += ".";
-      const skipped = [];
-      if (badRows) skipped.push(`${badRows} bad timestamp(s)`);
-      for (const [lab, n] of Object.entries(unknown)) {
-        skipped.push(`${n} row(s) labelled "${lab}"`);
-      }
-      if (skipped.length) msg += ` Skipped ${skipped.join(", ")}.`;
-      msg += note;
-
-      if (loaded && video.duration) {
-        const past = events.filter((e) => e.t > video.duration).length;
-        if (past) {
-          return setStatus(msg + `<br><b>${past} mark(s) land past the end of `
-            + `the loaded video (${mmss(video.duration)})</b> — different cut?`, true);
-        }
-      }
-      setStatus(msg, skipped.length > 0);
-    };
-    reader.readAsText(file);
-  }
+  stage.addEventListener("drop", (e) => loadFile(e.dataTransfer.files[0]));
 
   // ---- marking ------------------------------------------------------------
   function mark(label) {
@@ -644,6 +531,44 @@
       case "4": video.playbackRate = 8; break;
     }
   });
+
+  // ---- import -------------------------------------------------------------
+  const csvInput = document.getElementById("csvInput");
+
+  document.getElementById("importBtn").onclick = () => csvInput.click();
+  csvInput.onchange = (e) => {
+    if (e.target.files[0]) importCsv(e.target.files[0]);
+    e.target.value = "";                       // allow re-importing the same file
+  };
+
+  function importCsv(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const rows = String(reader.result).split(/\r?\n/).map(r => r.trim()).filter(Boolean);
+      const valid = new Set(Object.values(CLASSES));
+      let added = 0, skipped = 0, firstId = "";
+
+      rows.forEach((row, i) => {
+        const [vid, t, label] = row.split(",").map(c => c.trim());
+        if (i === 0 && (label || "").toLowerCase() === "label") return;   // header
+        const time = parseFloat(t);
+        const lab  = (label || "").toLowerCase();
+        if (!isFinite(time) || time < 0 || !valid.has(lab)) { skipped++; return; }
+        if (events.some(ev => ev.label === lab && Math.abs(ev.t - time) < 1e-3)) { skipped++; return; }
+        events.push({ t: time, label: lab });
+        if (!firstId && vid) firstId = vid;
+        added++;
+      });
+
+      events.sort((a, b) => a.t - b.t);
+      selected = -1;
+      if (!videoId.value.trim() && firstId) videoId.value = firstId;
+      render();
+      alert(`Imported ${added} mark${added === 1 ? "" : "s"}` +
+            (skipped ? ` \u00b7 ${skipped} row${skipped === 1 ? "" : "s"} skipped` : "") + ".");
+    };
+    reader.readAsText(file);
+  }
 
   // ---- export -------------------------------------------------------------
   exportBtn.onclick = () => {
